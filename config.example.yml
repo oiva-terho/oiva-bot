@@ -1,0 +1,3 @@
+telegram_token: "14325678:KJlkjioooYOUR-TOKEN_ooocpskdlfslsdDFdkf"
+bot_username: "@your_botname"
+authorized_users: [123456789, 987654321] # if empty, the bot is available to anyone. pass user ids as integers
