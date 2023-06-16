@@ -1,0 +1,5 @@
+.venv
+received-docs
+*.log
+*.pyc
+.env
