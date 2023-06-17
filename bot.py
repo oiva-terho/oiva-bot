@@ -1,11 +1,12 @@
 import os
 import yaml
 from datetime import datetime
-from telegram import Update
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import (
     Application,
     CommandHandler,
     MessageHandler,
+    CallbackQueryHandler,
     filters,
     ContextTypes,
 )
@@ -22,8 +23,8 @@ save_directory = "received-docs"
 if not os.path.exists(save_directory):
   os.makedirs(save_directory)
 
-# Commands
 
+# Commands
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
   message = """Welcome, adventurer! Fame and fortune avait! \n\n
@@ -49,94 +50,99 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # Saves document to this computer
 
-
 async def save_doc(file_name, update: Update, context: ContextTypes.DEFAULT_TYPE):
   folder_name = file_name.split(".")[0].strip()
-
   subfolder_path = os.path.join(save_directory, folder_name)
-  if not os.path.exists(subfolder_path):
-    os.makedirs(subfolder_path)
-
+  os.makedirs(subfolder_path, exist_ok=True)
   file_path = os.path.join(subfolder_path, file_name)
 
   if os.path.exists(file_path):
     await update.message.reply_text("File already exists. Should it be replaced?")
-    await context.bot.send_document(
-        chat_id=update.message.chat_id, document=file_path
-    )
+    await context.bot.send_document(chat_id=update.message.chat_id, document=file_path)
     context.user_data["conflict_path"] = file_path
-    return
-
-  file = await context.bot.get_file(context.user_data["doc_id"])
-  await file.download_to_drive(file_path)
-  del context.user_data["doc_id"]
-  await update.message.reply_text(f"{file_name} saved.")
+  else:
+    file = await context.bot.get_file(context.user_data["doc_id"])
+    await file.download_to_drive(file_path)
+    del context.user_data["doc_id"]
+    await update.message.reply_text(f"{file_name} saved.")
   return
 
 
 async def handle_doc(update: Update, context: ContextTypes.DEFAULT_TYPE):
   user_id = update.message.from_user.id
 
-  if user_id in authorized_users:
-    if update.message.photo:
-      context.user_data["doc_id"] = update.message.photo[-1].file_id
-      if update.message.caption:
-        doc_name = update.message.caption.strip() + '.jpg'
-        await save_doc(doc_name, update, context)
-        return
-      else:
-        context.user_data["doc_type"] = '.jpg'
-        await update.message.reply_text("Write file name in format: \n Owner. File name")
-        return
+  if user_id not in authorized_users:
+    return
 
-    if update.message.document:
-      supported_formats = {
-          "image/jpeg": ".jpg",
-          "application/pdf": ".pdf",
-          "application/msword": ".doc",
-      }
-      file_type = update.message.document.mime_type
-      if file_type in supported_formats:
-        context.user_data["doc_id"] = update.message.document.file_id
-        if update.message.caption:
-          doc_name = (
-              update.message.caption.strip(
-              ) + supported_formats[file_type]
-          )
-          await save_doc(doc_name, update, context)
-        else:
-          context.user_data["doc_type"] = supported_formats[file_type]
-          await update.message.reply_text("Write file name in format: \n Owner - File name")
-          return
+  if update.message.photo:
+    context.user_data["doc_id"] = update.message.photo[-1].file_id
+    if update.message.caption:
+      doc_name = update.message.caption.strip() + '.jpg'
+      await save_doc(doc_name, update, context)
+    else:
+      context.user_data["doc_type"] = '.jpg'
+      await update.message.reply_text("Write file name in format:\nOwner. File name")
+    return
+
+  if update.message.document:
+    supported_formats = {
+        "image/jpeg": ".jpg",
+        "application/pdf": ".pdf",
+        "application/msword": ".doc",
+    }
+    file_type = update.message.document.mime_type
+    if file_type in supported_formats:
+      context.user_data["doc_id"] = update.message.document.file_id
+      if update.message.caption:
+        doc_name = update.message.caption.strip() + \
+            supported_formats[file_type]
+        await save_doc(doc_name, update, context)
       else:
-        await update.message.reply_text("Unsupported type")
-        return
+        context.user_data["doc_type"] = supported_formats[file_type]
+        await update.message.reply_text("Write file name in format:\nOwner - File name")
     else:
       await update.message.reply_text("Unsupported type")
-      return
+  else:
+    await update.message.reply_text("Unsupported type")
+
 
 def save_message(text: str, user_id: str, bot=False):
   if user_id in authorized_users:
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-
     save_path = os.path.join(save_directory, f"{user_id}.txt")
-    if bot == False:
-      with open(save_path, "a") as file:
-        file.write(f"{now} : {text}" + "\n")
-    else:
-      with open(save_path, "a") as file:
-        file.write(f"{now} : Bot: {text}" + "\n")
+    with open(save_path, "a") as file:
+      prefix = f"{now} : Bot: " if bot else f"{now} : "
+      file.write(prefix + text + "\n")
+
+
+async def choose_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
+  # Should return document from base
+  folders = [item for item in os.listdir(save_directory)
+             if os.path.isdir(os.path.join(save_directory, item))]
+  keyboard = InlineKeyboardMarkup.from_column(
+      [InlineKeyboardButton(folder, callback_data=folder) for folder in folders])
+  await update.message.reply_text("Please choose:", reply_markup=keyboard)
+  return
+
 
 # Responses
 
-def handle_response(text: str) -> str:
+async def handle_response(text: str, update: Update, context: ContextTypes.DEFAULT_TYPE):
   proccesed: str = text.lower()
   if "save" in proccesed:
     return "Upload it here and write the name under photo"
   if "give" or "дай" in proccesed:
-    return "Wait a bit, it will work later"
+    await choose_file(update, context)
+    return
   else:
     return
+
+
+async def button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    # Returns data of selected button in an edited message
+  query = update.callback_query
+  await query.answer()
+  await query.edit_message_text(text=f"Selected option: {query.data}")
 
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -144,33 +150,30 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
   user_id: str = update.message.from_user.id
   text: str = update.message.text
 
-  if "doc_id" in context.user_data:
-    if "conflict_path" in context.user_data:
-      if text.lower() == "yes" or text.lower() == "да":
-        file = await context.bot.get_file(context.user_data["doc_id"])
-        await file.download_to_drive(context.user_data["conflict_path"])
-        del context.user_data["doc_id"]
-        del context.user_data["conflict_path"]
-        await update.message.reply_text("Done")
-        return
-      else:
-        del context.user_data["conflict_path"]
-        await update.message.reply_text("Enter another name")
-        return
+  if "doc_id" in context.user_data and "conflict_path" in context.user_data:
+    if text.lower() in ["yes", "да"]:
+      file = await context.bot.get_file(context.user_data["doc_id"])
+      await file.download_to_drive(context.user_data["conflict_path"])
+      del context.user_data["doc_id"]
+      del context.user_data["conflict_path"]
+      await update.message.reply_text("Done")
+    else:
+      del context.user_data["conflict_path"]
+      await update.message.reply_text("Enter another name")
+  else:
     await save_doc(text + context.user_data["doc_type"], update, context)
     del context.user_data["doc_type"]
-    return
 
   save_message(text, user_id)
 
   if chat_type == "group":
     if bot_username in text:
       new_text: str = text.replace(bot_username, "").strip()
-      response: str = handle_response(new_text)
+      response: str = await handle_response(new_text)
     else:
       return
   else:
-    response: str = handle_response(text)
+    response: str = await handle_response(text, update, context)
     if response != None:
       save_message(response, user_id, True)
       await update.message.reply_text(response)
@@ -192,6 +195,9 @@ def main():
   # Messages
   app.add_handler(MessageHandler(filters.ATTACHMENT, handle_doc))
   app.add_handler(MessageHandler(filters.TEXT, handle_message))
+
+  # Button
+  app.add_handler(CallbackQueryHandler(button))
 
   # Error
   app.add_error_handler(error)
